@@ -16,9 +16,23 @@ A command-line task management application written in pure Dart, demonstrating O
 - `lib/task_manager.dart`: Business logic layer and exception handling.
 - `bin/task_manager.dart`: CLI entry point and menu loop.
 
-## How to Run
+## How to Run the App
 
-1. Clone the repository:
+1. Make sure you have the [Dart SDK](https://dart.dev/get-dart) installed.
+2. Clone the repository and navigate into the project folder:
    ```bash
-   git clone [https://github.com/leeandri/dart_cli_task_manager.git](https://github.com/leeandri/dart_cli_task_manager.git)
+   git clone https://github.com/leeandri/dart_cli_task_manager.git
+   cd dart_cli_task_manager
    ```
+3. Run the application:
+   ```bash
+   dart run bin/task_manager.dart
+   ```
+
+## How to Run the Tests
+
+- To run the unit test suite and verify that all features work properly:
+
+  ```bash
+  dart test
+  ```
