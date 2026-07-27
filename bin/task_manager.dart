@@ -1,12 +1,49 @@
 import 'dart:io';
-import 'package:task_manager/storage_interface.dart';
-import 'package:task_manager/task.dart';
-import 'package:task_manager/task_manager.dart';
+import 'dart:convert';
+
+import 'package:task_manager/models/task.dart';
+import 'package:task_manager/repositories/task_repository.dart';
+import 'package:task_manager/services/task_manager.dart';
+import 'package:task_manager/exceptions/task_exception.dart';
+
+String readInput() {
+  return stdin.readLineSync(encoding: utf8)?.trim() ?? '';
+}
+
+Priority _promptPriority() {
+  stdout.write('Priority (low/medium/high, default is medium): ');
+  final input = readInput().toLowerCase();
+  if (input == 'high' || input == '3' || input == 'h') {
+    return Priority.high;
+  } else if (input == 'low' || input == '1' || input == 'l') {
+    return Priority.low;
+  }
+  return Priority.medium;
+}
+
+DateTime? _promptDeadline() {
+  stdout.write('Optional deadline (YYYY-MM-DD, press Enter to skip): ');
+  final input = readInput();
+  if (input.isEmpty) return null;
+
+  try {
+    return DateTime.parse(input);
+  } catch (_) {
+    print('Invalid date format. Proceeding without deadline.');
+    return null;
+  }
+}
+
+String _formatDate(DateTime date) {
+  final year = date.year.toString().padLeft(4, '0');
+  final month = date.month.toString().padLeft(2, '0');
+  final day = date.day.toString().padLeft(2, '0');
+  return '$year-$month-$day';
+}
 
 void main() async {
-  final file = File('tasks.json');
-  final storage = JsonTaskStorage(file);
-  final taskManager = TaskManager(storage);
+  final storage = JsonTaskStorage();
+  final manager = TaskManager(storage);
 
   print('=== CLI TASK MANAGER ===');
 
@@ -19,138 +56,108 @@ void main() async {
     print('5. Exit');
     stdout.write('Choose an option: ');
 
-    String? choice = stdin.readLineSync();
+    final input = readInput();
 
-    switch (choice) {
-      case '1':
-        String? taskTitle;
-        while (taskTitle == null || taskTitle.trim().isEmpty) {
-          stdout.write('Enter task title (cannot be empty): ');
-          taskTitle = stdin.readLineSync()?.trim();
-          if (taskTitle == null || taskTitle.isEmpty) {
-            print('Error: Title cannot be blank. Please try again.');
+    if (input == '5') {
+      print('Exiting Task Manager. Goodbye!');
+      break;
+    }
+
+    try {
+      switch (input) {
+        case '1':
+          stdout.write('Task Title: ');
+          final title = readInput();
+          if (title.isEmpty) {
+            print('Title cannot be empty.');
+            continue;
           }
-        }
 
-        stdout.write('Enter priority (low/medium/high): ');
-        String? priorityInput = stdin.readLineSync()?.trim().toLowerCase();
+          final priority = _promptPriority();
+          final deadline = _promptDeadline();
+          final id = DateTime.now().millisecondsSinceEpoch.toString();
 
-        Priority taskPriority;
-        if (priorityInput == 'high') {
-          taskPriority = Priority.high;
-        } else if (priorityInput == 'low') {
-          taskPriority = Priority.low;
-        } else if (priorityInput == 'medium') {
-          taskPriority = Priority.medium;
-        } else {
-          print('Invalid priority entered. Defaulting to MEDIUM.');
-          taskPriority = Priority.medium;
-        }
+          // Instantiate UrgentTask or SimpleTask based on deadline presence
+          final Task task = deadline != null
+              ? UrgentTask(
+                  id: id,
+                  title: title,
+                  priority: priority,
+                  deadline: deadline,
+                )
+              : SimpleTask(id: id, title: title, priority: priority);
 
-        stdout.write('Enter deadline (YYYY-MM-DD) or press Enter to skip: ');
-        String? deadlineInput = stdin.readLineSync()?.trim();
+          await manager.addTask(task);
+          print('Task added successfully!');
+          break;
 
-        DateTime? deadline;
-        if (deadlineInput != null && deadlineInput.isNotEmpty) {
-          final dateRegExp = RegExp(
-            r'^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$',
-          );
+        case '2':
+          final tasks = await manager.getAllTasks();
+          if (tasks.isEmpty) {
+            print('No tasks found.');
+            break;
+          }
 
-          if (dateRegExp.hasMatch(deadlineInput)) {
-            try {
-              deadline = DateTime.parse(deadlineInput);
-            } catch (_) {
-              print('Invalid date value. Task created without deadline.');
-            }
+          stdout.write('Sort by priority? (y/n, default is date): ');
+          final sortInput = readInput().toLowerCase();
+
+          if (sortInput == 'y' || sortInput == 'yes') {
+            tasks.sort((a, b) => b.priority.index.compareTo(a.priority.index));
           } else {
-            print(
-              'Invalid date format (must be YYYY-MM-DD). Task created without deadline.',
-            );
+            // Sort deadlines chronologically first, then simple tasks by creation date
+            tasks.sort((a, b) {
+              final aDeadline = a is UrgentTask ? a.deadline : null;
+              final bDeadline = b is UrgentTask ? b.deadline : null;
+
+              if (aDeadline != null && bDeadline != null) {
+                return aDeadline.compareTo(bDeadline);
+              } else if (aDeadline != null) {
+                return -1;
+              } else if (bDeadline != null) {
+                return 1;
+              } else {
+                return a.createdAt.compareTo(b.createdAt);
+              }
+            });
           }
-        }
 
-        String uniqueID = DateTime.now().millisecondsSinceEpoch.toString();
-
-        Task task;
-        if (taskPriority == Priority.high) {
-          task = UrgentTask(id: uniqueID, title: taskTitle, deadline: deadline);
-        } else {
-          task = SimpleTask(
-            id: uniqueID,
-            title: taskTitle,
-            priority: taskPriority,
-            deadline: deadline,
-          );
-        }
-
-        await taskManager.addTask(task);
-        print('Task added successfully!');
-        break;
-
-      case '2':
-        stdout.write('Sort by priority? (y/n, default is date): ');
-        String? sortInput = stdin.readLineSync()?.trim().toLowerCase();
-
-        bool sortByPriority = (sortInput == 'y' || sortInput == 'yes');
-
-        final tasks = await taskManager.getTasks(
-          sortByPriority: sortByPriority,
-        );
-
-        if (tasks.isEmpty) {
-          print('No tasks found.');
-        } else {
           print('\n--- YOUR TASKS ---');
-          for (var task in tasks) {
-            String status = task.completed ? '[X]' : '[ ]';
-            String deadlineInfo = task.deadline != null
-                ? 'Due: ${task.deadline.toString().split(' ')[0]}'
-                : '               ';
+          for (var t in tasks) {
+            final status = t.isCompleted ? '[X]' : '[ ]';
+            final priorityStr = '(${t.priority.name.toUpperCase()})';
+
+            String dueStr = '                ';
+            if (t is UrgentTask) {
+              dueStr = 'Due: ${_formatDate(t.deadline)}';
+            }
+
             print(
-              '$status ID: ${task.id} | $deadlineInfo | ${task.title} (${task.priority.name.toUpperCase()})',
+              '$status ID: ${t.id} | ${dueStr.padRight(15)} | ${t.title} $priorityStr',
             );
           }
-        }
-        break;
+          break;
 
-      case '3':
-        stdout.write('Enter task ID to mark as done: ');
-        String? id = stdin.readLineSync();
+        case '3':
+          stdout.write('Task ID to complete: ');
+          final id = readInput();
+          await manager.markAsCompleted(id);
+          print('Task marked as complete.');
+          break;
 
-        if (id != null && id.isNotEmpty) {
-          try {
-            await taskManager.markAsDone(id);
-            print('Task marked as complete successfully!');
-          } on TaskNotFoundException catch (e) {
-            print('Error: ${e.message}');
-          }
-        } else {
-          print('Invalid ID.');
-        }
-        break;
+        case '4':
+          stdout.write('Task ID to delete: ');
+          final id = readInput();
+          await manager.deleteTask(id);
+          print('Task deleted.');
+          break;
 
-      case '4':
-        stdout.write('Enter task ID to delete: ');
-        String? id = stdin.readLineSync();
-
-        if (id != null && id.isNotEmpty) {
-          try {
-            await taskManager.deleteTask(id);
-            print('Task deleted successfully!');
-          } on TaskNotFoundException catch (e) {
-            print('Error: ${e.message}');
-          }
-        } else {
-          print('Invalid ID.');
-        }
-        break;
-
-      case '5':
-        print('Exiting Task Manager. Goodbye!');
-        return;
-
-      default:
-        print('Invalid option, try again.');
+        default:
+          print('Invalid option. Please try again.');
+      }
+    } on TaskException catch (e) {
+      print('Error: ${e.message}');
+    } catch (e) {
+      print('Unexpected error: $e');
     }
   }
 }
